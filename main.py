@@ -1,16 +1,5 @@
 import cv2
 import numpy as np
-import mediapipe as mp
-
-# Initialize MediaPipe Pose
-mp_pose = mp.solutions.pose
-pose = mp_pose.Pose(
-    static_image_mode=False,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.9
-)
-
-mp_drawing = mp.solutions.drawing_utils
 
 # Load YOLO
 net = cv2.dnn.readNet("yolov4.weights", "yolov4.cfg")
@@ -27,11 +16,60 @@ with open("coco.names", "r") as f:
     classes = [line.strip() for line in f.readlines()]
 
 # Load the video
-input_video_path = 'C:/Users/STT015/PycharmProjects/fencing-video-cropper/input_videos/sample_video.mp4'  # Change this to your input video file path
+input_video_path = 'C:/Users/STT015/PycharmProjects/fencing-video-cropper/input_videos/sample_video_3.mp4'  # Change this to your input video file path
 cap = cv2.VideoCapture(input_video_path)
 
-# Define the enlargement factor for bounding boxes
-enlargement_factor = 1.2  # Increase this value to make boxes bigger
+def create_gaussian_mask(shape):
+    """
+    Create a Gaussian mask that gives more weight to the center of the image.
+    """
+    center_x, center_y = shape[1] // 2, shape[0] // 2
+    sigma = min(shape) // 6  # Standard deviation, controls the spread of the weighting
+    mask_x, mask_y = np.meshgrid(np.arange(shape[1]), np.arange(shape[0]))
+
+    gaussian_mask = np.exp(-((mask_x - center_x) ** 2 + (mask_y - center_y) ** 2) / (2 * sigma ** 2))
+    return gaussian_mask / gaussian_mask.max()  # Normalize between 0 and 1
+
+
+def analyze_color(frame):
+    """
+    Analyze the dominant color in the frame, giving more weight to the center.
+    Returns True if it's more likely a fencer (white/metallic) and False if a referee (black).
+    """
+    # Convert frame to HSV (to better distinguish colors)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+    # Define color ranges for detecting white (fencers)
+    lower_white = np.array([0, 0, 168])
+    upper_white = np.array([172, 111, 255])
+
+    # Define color range for detecting metallic (reflective clothing)
+    lower_metallic = np.array([0, 0, 200])
+    upper_metallic = np.array([180, 50, 255])
+
+    # Define color range for detecting black (referees)
+    lower_black = np.array([0, 0, 0])
+    upper_black = np.array([180, 255, 50])
+
+    # Create masks for each color
+    mask_white = cv2.inRange(hsv, lower_white, upper_white)
+    mask_metallic = cv2.inRange(hsv, lower_metallic, upper_metallic)
+    mask_black = cv2.inRange(hsv, lower_black, upper_black)
+
+    # Create a Gaussian weight mask
+    gaussian_mask = create_gaussian_mask(frame.shape[:2])
+
+    # Apply the weight to each mask
+    white_weighted = np.sum(mask_white * gaussian_mask)
+    metallic_weighted = np.sum(mask_metallic * gaussian_mask)
+    black_weighted = np.sum(mask_black * gaussian_mask)
+
+    # If there are more weighted black pixels, it's likely a referee
+    if black_weighted > white_weighted and black_weighted > metallic_weighted:
+        return False  # Referee
+    else:
+        return True  # Fencer
+
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -63,12 +101,6 @@ while cap.isOpened():
                 x = int(center_x - w / 2)
                 y = int(center_y - h / 2)
 
-                # Increase the size of the bounding box
-                # w = int(w * enlargement_factor)
-                # h = int(h * enlargement_factor)
-                # x = max(0, int(center_x - w / 2))  # Adjust x to stay within bounds
-                # y = max(0, int(center_y - h / 2))  # Adjust y to stay within bounds
-
                 # Ensure the bounding box is within the frame
                 if x >= 0 and y >= 0 and (x + w) <= width and (y + h) <= height:
                     boxes.append([x, y, w, h])
@@ -78,40 +110,31 @@ while cap.isOpened():
     # Apply non-maxima suppression (NMS) to avoid multiple boxes for the same object
     indices = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
 
-    # Draw bounding boxes for detected people and apply MediaPipe Pose
+    # Draw bounding boxes for detected people and apply color filtering
     if len(indices) > 0:
         for i in indices.flatten():
             x, y, w, h = boxes[i]
             label = str(classes[class_ids[i]])
-            color = (0, 255, 0)  # Green for people
-            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-            cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
             # Crop the detected person's area from the frame
-            cropped_frame = frame[y:y+h, x:x+w]
+            cropped_frame = frame[y:y + h, x:x + w]
 
             # Ensure the cropped frame is not empty
             if cropped_frame.size == 0:
                 continue
 
-            # Normalize the cropped frame for better lighting contrast
-            normalized_frame = cv2.normalize(cropped_frame, None, 0, 255, cv2.NORM_MINMAX)
+            # Analyze the color in the bounding box with center-weighted analysis
+            if analyze_color(cropped_frame):  # Likely a fencer
+                color = (0, 255, 0)  # Green for fencers
+            else:  # Likely a referee
+                color = (0, 0, 255)  # Red for referees
 
-            # Convert the normalized frame to RGB for MediaPipe
-            image_rgb = cv2.cvtColor(normalized_frame, cv2.COLOR_BGR2RGB)
+            # Draw the bounding box with the detected color
+            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+            cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-            # Run MediaPipe Pose on the original size cropped frame
-            results = pose.process(image_rgb)
-
-            # Draw pose landmarks if they exist
-            if results.pose_landmarks:
-                mp_drawing.draw_landmarks(cropped_frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-
-            # Place the processed frame back into the original frame
-            frame[y:y+h, x:x+w] = cropped_frame
-
-    # Display the resulting frame with bounding boxes and pose landmarks
-    cv2.imshow('Fencing Pose Estimation', frame)
+    # Display the resulting frame with bounding boxes
+    cv2.imshow('Fencing Detection', frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
