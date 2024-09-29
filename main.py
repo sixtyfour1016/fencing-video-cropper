@@ -2,36 +2,31 @@ import cv2
 import numpy as np
 import mediapipe as mp
 
-# Initialize MediaPipe Pose
-mp_pose = mp.solutions.pose
-pose = mp_pose.Pose(
-    static_image_mode=False,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.9
-)
-
-mp_drawing = mp.solutions.drawing_utils
-
-# Load YOLO
+# Load YOLO (using YOLOv4 for this example)
 net = cv2.dnn.readNet("yolov4.weights", "yolov4.cfg")
 layer_names = net.getLayerNames()
-output_layers_indices = net.getUnconnectedOutLayers()
-
-if len(output_layers_indices) == 0:
-    print("No output layers found.")
-else:
-    output_layers = [layer_names[i - 1] for i in output_layers_indices.flatten()]
+output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers()]
 
 # Load class names (from COCO dataset)
 with open("coco.names", "r") as f:
     classes = [line.strip() for line in f.readlines()]
 
 # Load the video
-input_video_path = 'C:/Users/STT015/PycharmProjects/fencing-video-cropper/input_videos/sample_video.mp4'  # Change this to your input video file path
+input_video_path = 'C:/Users/STT015/PycharmProjects/fencing-video-cropper/input_videos/fencing_clip_170.mp4'
 cap = cv2.VideoCapture(input_video_path)
 
-# Define the enlargement factor for bounding boxes
-enlargement_factor = 1.2  # Increase this value to make boxes bigger
+# Initialize MediaPipe Pose
+mp_pose = mp.solutions.pose
+
+# Global variables for pose tracking
+pose_estimator = []
+pose_estimator_dim = []
+
+def compareDist(dim1, dim2):
+    """Calculate a distance metric to compare bounding boxes."""
+    x1, y1, w1, h1 = dim1
+    x2, y2, w2, h2 = dim2
+    return np.linalg.norm(np.array([x1, y1, w1, h1]) - np.array([x2, y2, w2, h2]))
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -63,55 +58,72 @@ while cap.isOpened():
                 x = int(center_x - w / 2)
                 y = int(center_y - h / 2)
 
-                # Increase the size of the bounding box
-                # w = int(w * enlargement_factor)
-                # h = int(h * enlargement_factor)
-                # x = max(0, int(center_x - w / 2))  # Adjust x to stay within bounds
-                # y = max(0, int(center_y - h / 2))  # Adjust y to stay within bounds
-
                 # Ensure the bounding box is within the frame
                 if x >= 0 and y >= 0 and (x + w) <= width and (y + h) <= height:
                     boxes.append([x, y, w, h])
                     confidences.append(float(confidence))
                     class_ids.append(class_id)
 
-    # Apply non-maxima suppression (NMS) to avoid multiple boxes for the same object
+    # Apply non-maxima suppression (NMS)
     indices = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
 
-    # Draw bounding boxes for detected people and apply MediaPipe Pose
+    # Assign pose estimators to each detected person
     if len(indices) > 0:
         for i in indices.flatten():
             x, y, w, h = boxes[i]
-            label = str(classes[class_ids[i]])
-            color = (0, 255, 0)  # Green for people
-            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-            cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-            # Crop the detected person's area from the frame
-            cropped_frame = frame[y:y+h, x:x+w]
+            # Determine which pose estimator to use
+            selected_pose_idx = 0
+            if len(pose_estimator) == 0:
+                # Create a new pose estimator
+                pose = mp_pose.Pose(min_detection_confidence=0.3, min_tracking_confidence=0.6)
+                pose_estimator.append(pose)
+                pose_estimator_dim.append([x, y, w, h])
+                selected_pose_idx = len(pose_estimator) - 1
+            else:
+                threshold_for_new = 100
+                prev_high_score = 0
+                selected_pose_idx_high = 0
+                prev_low_score = 1000000000
+                selected_pose_idx_low = 0
+                
+                for pose_idx, dim in enumerate(pose_estimator_dim):
+                    score = compareDist(dim, [x, y, w, h])
+                    if score > prev_high_score:
+                        selected_pose_idx_high = pose_idx
+                        prev_high_score = score
+                    if score < prev_low_score:
+                        selected_pose_idx_low = pose_idx
+                        prev_low_score = score
 
-            # Ensure the cropped frame is not empty
-            if cropped_frame.size == 0:
-                continue
+                if prev_high_score > threshold_for_new:
+                    # Create a new pose estimator for a new person
+                    pose = mp_pose.Pose(min_detection_confidence=0.3, min_tracking_confidence=0.6)
+                    pose_estimator.append(pose)
+                    pose_estimator_dim.append([x, y, w, h])
+                    selected_pose_idx = len(pose_estimator) - 1
+                else:
+                    selected_pose_idx = selected_pose_idx_low
+                    pose_estimator_dim[selected_pose_idx] = [x, y, w, h]
 
-            # Normalize the cropped frame for better lighting contrast
-            normalized_frame = cv2.normalize(cropped_frame, None, 0, 255, cv2.NORM_MINMAX)
+            # Get the selected pose estimator and apply it to the cropped person frame
+            pose = pose_estimator[selected_pose_idx]
+            cropped_frame = frame[y:y + h, x:x + w]
 
-            # Convert the normalized frame to RGB for MediaPipe
-            image_rgb = cv2.cvtColor(normalized_frame, cv2.COLOR_BGR2RGB)
+            if cropped_frame.size != 0:
+                # Convert the frame to RGB (for MediaPipe)
+                rgb_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
+                results = pose.process(rgb_frame)
 
-            # Run MediaPipe Pose on the original size cropped frame
-            results = pose.process(image_rgb)
+                # Draw pose landmarks on the frame if detected
+                if results.pose_landmarks:
+                    mp.solutions.drawing_utils.draw_landmarks(cropped_frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
 
-            # Draw pose landmarks if they exist
-            if results.pose_landmarks:
-                mp_drawing.draw_landmarks(cropped_frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+            # Draw the bounding box on the original frame
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-            # Place the processed frame back into the original frame
-            frame[y:y+h, x:x+w] = cropped_frame
-
-    # Display the resulting frame with bounding boxes and pose landmarks
-    cv2.imshow('Fencing Pose Estimation', frame)
+    # Display the frame with pose detection
+    cv2.imshow('Pose Detection with YOLO', frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
