@@ -1,21 +1,11 @@
 import cv2
+import random
 import easyocr
+import scoreboard
+from scoreboard import Scoreboard
 
-# Initialize the EasyOCR Reader
-reader = easyocr.Reader(['en'])
-
-# Define video path and ROI
 VIDEO_FILE = "input_videos/fencing_livestream_3.mp4"
 
-# Define initial ROI coordinates (manually adjust these as needed) 720p
-center_x = 640
-center_y = 600
-x_offset = 500
-y_offset = 40
-ROI_TOP_LEFT = (center_x - x_offset, center_y - y_offset)   # (x, y) top-left corner
-ROI_BOTTOM_RIGHT = (center_x + x_offset, center_y + y_offset)  # (x, y) bottom-right corner
-
-# Open the video
 cap = cv2.VideoCapture(VIDEO_FILE)
 
 if not cap.isOpened():
@@ -23,43 +13,42 @@ if not cap.isOpened():
     exit()
 
 frame_count = 0
-FRAME_SKIP = 1000  # Process every 30th frame
+FRAME_SKIP = random.randint(1000,2000)
+
+scoreboard = None
 
 while True:
     ret, frame = cap.read()
     if not ret:
         break
 
-    # Skip frames for faster processing
     if frame_count % FRAME_SKIP != 0:
         frame_count += 1
         continue
 
-    # Crop the ROI (scoreboard region)
-    scoreboard_roi = frame[ROI_TOP_LEFT[1]:ROI_BOTTOM_RIGHT[1], ROI_TOP_LEFT[0]:ROI_BOTTOM_RIGHT[0]]
+    scoreboard = Scoreboard(frame)
 
-    # Preprocess the image for better OCR results:
-    # Convert to grayscale
-    gray_scoreboard = cv2.cvtColor(scoreboard_roi, cv2.COLOR_BGR2GRAY)
+    GREEN_ROI_TOP_LEFT = scoreboard.GREEN_ROI_TOP_LEFT
+    GREEN_ROI_BOTTOM_RIGHT = scoreboard.GREEN_ROI_BOTTOM_RIGHT
+    RED_ROI_TOP_LEFT = scoreboard.RED_ROI_TOP_LEFT
+    RED_ROI_BOTTOM_RIGHT = scoreboard.RED_ROI_BOTTOM_RIGHT
 
-    # Apply thresholding (binary image) to improve contrast
-    _, thresh_scoreboard = cv2.threshold(gray_scoreboard, 150, 255, cv2.THRESH_BINARY_INV)
-
-    # Optional: Resize the image to make text larger
-    resized_scoreboard = cv2.resize(thresh_scoreboard, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-
-    # Perform OCR with EasyOCR on the preprocessed image
-    results = reader.readtext(resized_scoreboard)
-
-    # Print detected text
     print(f"Frame {frame_count}:")
-    for (bbox, text, prob) in results:
-        print(f"Detected Text: {text} (Confidence: {prob:.2f})")
 
-    # Display the video frame with the ROI box
-    cv2.rectangle(frame, ROI_TOP_LEFT, ROI_BOTTOM_RIGHT, (0, 255, 0), 2)
+    scoreboard.updateGreenFencerInfo()
+    scoreboard.updateRedFencerInfo()
+
+    green_fencer = scoreboard.green_fencer
+    red_fencer = scoreboard.red_fencer
+
+    cv2.rectangle(frame, GREEN_ROI_TOP_LEFT, GREEN_ROI_BOTTOM_RIGHT, (0, 255, 0), 2)
+    cv2.rectangle(frame, RED_ROI_TOP_LEFT, RED_ROI_BOTTOM_RIGHT, (0, 0, 255), 2)
     cv2.imshow("Scoreboard ROI", frame)
-    cv2.imshow("Processed Scoreboard", resized_scoreboard)
+
+    # cv2.imshow("Red Scoreboard", scoreboard.red_roi)
+    # cv2.imshow("Green Scoreboard", scoreboard.green_roi)
+
+    scoreboard.printScoreboard()
 
     if cv2.waitKey(30) & 0xFF == ord('q'):
         break
