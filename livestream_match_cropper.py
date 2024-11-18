@@ -4,7 +4,7 @@ import easyocr
 import scoreboard
 from scoreboard import Scoreboard
 
-VIDEO_FILE = "input_videos/fencing_livestream_3.mp4"
+VIDEO_FILE = "input_videos/fencing_livestream_1.mp4"
 
 cap = cv2.VideoCapture(VIDEO_FILE)
 
@@ -13,7 +13,7 @@ if not cap.isOpened():
     exit()
 
 frame_count = 0
-FRAME_SKIP = random.randint(1000,2000)
+FRAME_SKIP = 1500
 
 scoreboard = None
 
@@ -45,12 +45,9 @@ while True:
     cv2.rectangle(frame, RED_ROI_TOP_LEFT, RED_ROI_BOTTOM_RIGHT, (0, 0, 255), 2)
     cv2.imshow("Scoreboard ROI", frame)
 
-    # cv2.imshow("Red Scoreboard", scoreboard.red_roi)
-    # cv2.imshow("Green Scoreboard", scoreboard.green_roi)
-
     scoreboard.printScoreboard()
 
-    if cv2.waitKey(30) & 0xFF == ord('q'):
+    if cv2.waitKey(5) & 0xFF == ord(''):
         break
 
     frame_count += 1

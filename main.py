@@ -4,7 +4,7 @@ import easyocr
 import scoreboard
 from scoreboard import Scoreboard
 
-VIDEO_FILE = "input_videos/fencing_livestream_3.mp4"
+VIDEO_FILE = "input_videos/fencing_livestream_2.mp4"
 
 cap = cv2.VideoCapture(VIDEO_FILE)
 
@@ -13,9 +13,11 @@ if not cap.isOpened():
     exit()
 
 frame_count = 0
-FRAME_SKIP = random.randint(1000,2000)
+FRAME_SKIP = 3000
 
 scoreboard = None
+RED_ROI_TOP_LEFT = 0
+RED_ROI_BOTTOM_RIGHT = 0
 
 while True:
     ret, frame = cap.read()
@@ -26,12 +28,15 @@ while True:
         frame_count += 1
         continue
 
-    scoreboard = Scoreboard(frame)
+    if scoreboard is None:
+        scoreboard = Scoreboard(frame)
+    else:
+        scoreboard = Scoreboard(frame, RED_ROI_TOP_LEFT, RED_ROI_BOTTOM_RIGHT)
 
-    GREEN_ROI_TOP_LEFT = scoreboard.GREEN_ROI_TOP_LEFT
-    GREEN_ROI_BOTTOM_RIGHT = scoreboard.GREEN_ROI_BOTTOM_RIGHT
     RED_ROI_TOP_LEFT = scoreboard.RED_ROI_TOP_LEFT
     RED_ROI_BOTTOM_RIGHT = scoreboard.RED_ROI_BOTTOM_RIGHT
+    GREEN_ROI_TOP_LEFT = scoreboard.GREEN_ROI_TOP_LEFT
+    GREEN_ROI_BOTTOM_RIGHT = scoreboard.GREEN_ROI_BOTTOM_RIGHT
 
     print(f"Frame {frame_count}:")
 
@@ -41,14 +46,21 @@ while True:
     green_fencer = scoreboard.green_fencer
     red_fencer = scoreboard.red_fencer
 
-    # cv2.rectangle(frame, GREEN_ROI_TOP_LEFT, GREEN_ROI_BOTTOM_RIGHT, (0, 255, 0), 2)
-    # cv2.rectangle(frame, RED_ROI_TOP_LEFT, RED_ROI_BOTTOM_RIGHT, (0, 0, 255), 2)
-    cv2.imshow("Scoreboard ROI", frame)
+    __frame = frame.copy()
+    cv2.rectangle(__frame, GREEN_ROI_TOP_LEFT, GREEN_ROI_BOTTOM_RIGHT, (0, 255, 0), 2)
+    cv2.rectangle(__frame, RED_ROI_TOP_LEFT, RED_ROI_BOTTOM_RIGHT, (0, 0, 255), 2)
+    cv2.imshow("Scoreboard ROI", __frame)
 
     scoreboard.printScoreboard()
 
-    if cv2.waitKey(5) & 0xFF == ord('q'):
+    key = chr(cv2.waitKey(5) & 0xFF)
+    if key == 'q':
         break
+    elif key == ' ':
+        scoreboard.editScoreboard()
+
+    RED_ROI_TOP_LEFT = scoreboard.RED_ROI_TOP_LEFT
+    RED_ROI_BOTTOM_RIGHT = scoreboard.RED_ROI_BOTTOM_RIGHT
 
     frame_count += 1
 
