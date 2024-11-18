@@ -9,7 +9,7 @@
 
 ## Description
 Aims of this project:
-(Everything automated!!)
+(everything automated!!)
 1. Split fencing competition livestreams into each of their matches
 2. Trim down each match into only important clips
 3. Upload the result to youtube 
